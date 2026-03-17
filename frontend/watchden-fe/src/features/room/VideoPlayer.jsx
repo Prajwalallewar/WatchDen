@@ -1,233 +1,374 @@
-import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  forwardRef,
+  useImperativeHandle,
+} from "react";
 import ReactPlayer from "react-player";
+import {
+  CornersOutIcon,
+  CornersInIcon,
+  PlayIcon,
+  CircleIcon,
+} from "@phosphor-icons/react";
 
-const VideoPlayer = forwardRef(({ roomCode, stream, isHost, mediaName, isMp4, onPlay }, ref) => {
-  // --- 1. HOOKS & STATE (Must be at the top) ---
-  const [url, setUrl] = useState("https://www.youtube.com/watch?v=LXb3EKWsInQ");
-  const [playing, setPlaying] = useState(false);
-  const [showOverlay, setShowOverlay] = useState(false);
+const VideoPlayer = forwardRef(
+  (
+    {
+      roomCode,
+      stream,
+      isHost,
+      mediaName,
+      isMp4,
+      isYoutube,
+      youtubeUrl,
+      isPlaying,
+      onPlay,
+      onPause,
+      onProgress,
+      muted,
+      volume,
+    },
+    ref
+  ) => {
+    // --- State ---
+    const [playing, setPlaying] = useState(isPlaying);
+    const [showOverlay, setShowOverlay] = useState(false);
+    const [showPlayOverlay, setShowPlayOverlay] = useState(false);
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const [isValidStream, setIsValidStream] = useState(true);
 
-  const [showPlayOverlay, setShowPlayOverlay] = useState(false);
+    // --- References ---
+    const videoRef = useRef(null);
+    const reactPlayerRef = useRef(null);
+    const playerWrapperRef = useRef(null);
 
-  // Ref for the native video element
-  const videoRef = useRef(null);
+    // Track time locally to avoid calling broken ref methods
+    const currentTimeRef = useRef(0);
 
-  // --- 2. EFFECTS ---
+    // --- Synchronization ---
+    useEffect(() => {
+      setPlaying(isPlaying);
+    }, [isPlaying]);
 
-  // Show overlay when mediaName changes, hide after 3s
-  useEffect(() => {
-    if (mediaName) {
-      setShowOverlay(true);
-      const timer = setTimeout(() => setShowOverlay(false), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [mediaName]);
-
-  // 🟢 Internal Helper for Snap-to-Live
-  const jumpToLiveInternal = () => {
-    const vid = videoRef.current;
-    if (vid && vid.buffered.length > 0) {
-      // Jump to the very end of the buffered range (Live Edge)
-      try {
-        vid.currentTime = vid.buffered.end(vid.buffered.length - 1);
-      } catch (e) {
-        console.log("Jump to live failed", e);
+    useEffect(() => {
+      if (videoRef.current) {
+        videoRef.current.volume = volume;
+        videoRef.current.muted = muted;
       }
-    }
-  };
+    }, [volume, muted]);
 
-  // Expose methods to Parent via Ref
-  useImperativeHandle(ref, () => ({
-    pause: () => {
-      if (videoRef.current) videoRef.current.pause();
-    },
-    play: () => {
-      if (videoRef.current) videoRef.current.play().catch(e => console.log("Play interrupted", e));
-    },
-    seek: (time) => {
-      if (videoRef.current) videoRef.current.currentTime = time;
-    },
-    jumpToLive: jumpToLiveInternal // Use the internal function
-  }));
-
-  const [isValidStream, setIsValidStream] = useState(true);
-
-  // Auto-play WebRTC stream when it changes
-  useEffect(() => {
-    const vid = videoRef.current;
-
-    // 🟢 Reset valid state to TRUE whenever the stream reference updates
-    console.log("🎥 VideoPlayer Effect: Stream changed:", stream?.id);
-    setIsValidStream(!!stream);
-
-    if (stream) {
-      const track = stream.getVideoTracks()[0];
-
-      const handleTrackEnded = () => {
-        console.log("❌ Stream Track Ended");
-        setIsValidStream(false);
-      };
-
-      if (track) {
-        track.addEventListener("ended", handleTrackEnded);
-
-        // Check immediate state
-        if (track.readyState === "ended") {
-          console.warn("⚠️ Stream Track is already ENDED on mount");
-          setIsValidStream(false);
-        } else {
-          setIsValidStream(true); // Confirm it is valid
-        }
+    useEffect(() => {
+      if (mediaName) {
+        setShowOverlay(true);
+        const timer = setTimeout(() => setShowOverlay(false), 3000);
+        return () => clearTimeout(timer);
       }
+    }, [mediaName]);
 
-      console.log("🎥 Attaching Stream:", stream.id);
-      if (vid) {
-        vid.srcObject = stream;
-        // Try to play. If browser blocks it (Autoplay Policy), show the "Click to Play" button.
-        vid.play().catch(e => {
-          console.error("Autoplay failed", e);
-          if (e.name === "NotAllowedError") {
-            setShowPlayOverlay(true);
-          }
+    // --- Helpers ---
+    const toggleFullscreen = () => {
+      if (!document.fullscreenElement) {
+        playerWrapperRef.current?.requestFullscreen().catch((err) => {
+          // console.error(err)
         });
+        setIsFullscreen(true);
+      } else {
+        document.exitFullscreen();
+        setIsFullscreen(false);
+      }
+    };
+
+    useEffect(() => {
+      const handleFsChange = () =>
+        setIsFullscreen(!!document.fullscreenElement);
+      document.addEventListener("fullscreenchange", handleFsChange);
+      return () =>
+        document.removeEventListener("fullscreenchange", handleFsChange);
+    }, []);
+
+    const jumpToLiveInternal = () => {
+      if (isYoutube && reactPlayerRef.current) {
+        // Only try to seek if the method actually exists (safety check)
+        if (typeof reactPlayerRef.current.seekTo === "function") {
+          const duration = reactPlayerRef.current.getDuration();
+          if (duration) {
+            reactPlayerRef.current.seekTo(duration - 1, "seconds");
+          }
+        }
+        return;
       }
 
-      return () => {
-        if (track) {
-          track.removeEventListener("ended", handleTrackEnded);
+      const vid = videoRef.current;
+      if (vid && vid.buffered.length > 0) {
+        try {
+          vid.currentTime = vid.buffered.end(vid.buffered.length - 1);
+        } catch (e) {
+          // console.error("Failed to jump to live edge", e);
         }
-      };
-    }
-  }, [stream]);
+      }
+    };
 
-  // --- 3. RENDER ---
+    // --- Imperative Handle ---
+    useImperativeHandle(
+      ref,
+      () => ({
+        pause: () => setPlaying(false),
+        play: () => setPlaying(true),
+        seek: (time) => {
+          if (isYoutube) {
+            // Safety check for seekTo
+            if (
+              reactPlayerRef.current &&
+              typeof reactPlayerRef.current.seekTo === "function"
+            ) {
+              reactPlayerRef.current.seekTo(time, "seconds");
+            }
+          } else if (videoRef.current) {
+            videoRef.current.currentTime = time;
+          }
+        },
+        jumpToLive: jumpToLiveInternal,
 
-  // 🟢 Waiting for Stream / Stream Disconnected
-  if (isMp4 && (!stream || !isValidStream)) {
-    return (
-      <div className="player-wrapper" style={styles.wrapper}>
-        {/* Blurred Background with Message */}
-        <div style={{
-          ...styles.playerContainer,
-          color: 'white',
-          backgroundColor: '#000',
-          backgroundImage: 'url(/assets/placeholder_blur.jpg)', // Optional: You could use a generic poster if available
-          backgroundSize: 'cover'
-        }}>
-          <div style={{
-            position: 'absolute',
-            inset: 0,
-            backdropFilter: 'blur(15px)',
-            backgroundColor: 'rgba(0,0,0,0.5)',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '15px'
-          }}>
-            <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', textAlign: 'center' }}>
-              🚫 Video Removed by Host
-            </h2>
-            <p style={{ color: '#94a3b8' }}>Waiting for host to resume...</p>
-          </div>
-        </div>
-      </div>
+        // Return locally tracked time instead of calling ref method
+        getCurrentTime: () => {
+          if (isYoutube) {
+            return currentTimeRef.current;
+          }
+          if (videoRef.current) {
+            return videoRef.current.currentTime;
+          }
+          return 0;
+        },
+      }),
+      [isYoutube, isMp4]
     );
-  }
 
-  // If a WebRTC stream exists (Host is streaming), show the VIDEO tag
-  if (stream && isValidStream) {
-    return (
-      <div className="player-wrapper" style={styles.wrapper}>
-        <div style={styles.playerContainer}>
-          {/* 🔴 LIVE STREAM VIEW */}
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            // 🟢 ENABLE CONTROLS FOR VIEWERS
-            // Viewers get controls (Play/Pause/Vol) ONLY if it's a Movie, not for Camera
-            controls={!isHost && isMp4}
-            onPlay={onPlay} // Attach onPlay listener
-            muted={isHost} // Host mutes themselves to avoid echo
-            style={{ width: "100%", height: "100%", objectFit: "contain" }}
-          />
-          {/* Overlay Badge */}
-          <div style={styles.liveBadge}>🔴 LIVE</div>
+    // --- Stream Autoplay ---
+    useEffect(() => {
+      if (isYoutube) return;
+      setIsValidStream(!!stream);
 
-          {/* 🟢 Click to Play Overlay (Fixes NotAllowedError) */}
-          {showPlayOverlay && (
+      const vid = videoRef.current;
+      if (stream && vid) {
+        vid.srcObject = stream;
+        if (vid.isConnected) {
+          vid.play().catch((e) => {
+            if (e.name === "NotAllowedError") setShowPlayOverlay(true);
+          });
+        }
+      }
+    }, [stream, isYoutube]);
+
+    // --- Render Logic ---
+
+    const effectiveYoutubeUrl =
+      typeof youtubeUrl === "string" ? youtubeUrl.trim() : "";
+
+    // 1. YouTube Mode
+    if (isYoutube && effectiveYoutubeUrl) {
+      return (
+        <div
+          className="player-wrapper player-wrapper--youtube"
+          style={styles.wrapper}
+          ref={playerWrapperRef}
+        >
+          <div style={{ ...styles.playerContainer, position: "relative" }}>
+            <ReactPlayer
+              ref={reactPlayerRef}
+              src={effectiveYoutubeUrl}
+              playing={playing}
+              muted={muted}
+              volume={volume}
+              playsInline={true}
+              controls={false}
+              width="100%"
+              height="100%"
+              onStart={() => {
+                if (isPlaying) setPlaying(true);
+              }}
+              onPlay={() => {
+                setPlaying(true);
+                if (onPlay) onPlay();
+              }}
+              onPause={() => {
+                if (onPause) onPause();
+              }}
+              // Update local time ref on progress
+              onProgress={(progress) => {
+                currentTimeRef.current = progress.playedSeconds;
+                if (onProgress) {
+                  onProgress(progress.playedSeconds);
+                }
+              }}
+              onError={(e) => {
+                // console.error("YT Player Error:", e)
+              }}
+            />
+          </div>
+
+          <div style={styles.liveBadge}>
+            <CircleIcon weight="fill" size={10} color="#ff0000" />
+            <span>YouTube</span>
+          </div>
+
+          {isPlaying && !playing && (
             <div style={styles.playOverlay}>
               <button
                 style={styles.bigPlayBtn}
-                onClick={() => {
-                  if (videoRef.current) {
-                    videoRef.current.play();
-                    setShowPlayOverlay(false);
-                    // Also jump to live to ensure sync
-                    jumpToLiveInternal();
-                  }
-                }}
+                onClick={() => setPlaying(true)}
               >
-                ▶ Click to Watch
+                <PlayIcon weight="fill" size={24} />
+                Click to Start
               </button>
             </div>
           )}
 
-          {/* 🟢 Media Name Overlay (Thumbnail effect) */}
-          {showOverlay && mediaName && (
-            <div style={styles.mediaOverlay}>
-              🎥 Playing: {mediaName}
-            </div>
+          {!isHost && (
+            <div
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                height: "100%",
+                zIndex: 10,
+                background: "transparent",
+                cursor: "default",
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setPlaying(true);
+              }}
+            />
           )}
+
+          <button onClick={toggleFullscreen} style={styles.fsBtn}>
+            {isFullscreen ? (
+              <CornersInIcon size={24} />
+            ) : (
+              <CornersOutIcon size={24} />
+            )}
+          </button>
+        </div>
+      );
+    }
+
+    // 2. MP4 / Stream Placeholder
+    if (isMp4 && (!stream || !isValidStream)) {
+      return (
+        <div
+          className="player-wrapper"
+          style={styles.wrapper}
+          ref={playerWrapperRef}
+        >
+          <div
+            style={{
+              ...styles.playerContainer,
+              color: "white",
+              backgroundColor: "#000",
+              backgroundImage: "url(/assets/placeholder_blur.jpg)",
+              backgroundSize: "cover",
+            }}
+          >
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                backdropFilter: "blur(15px)",
+                backgroundColor: "rgba(0,0,0,0.5)",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "15px",
+              }}
+            >
+              <h2 style={{ fontSize: "1.5rem", fontWeight: "bold" }}>
+                Video Not Started Yet
+              </h2>
+              <p style={{ color: "#94a3b8" }}>Waiting for host to resume...</p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 3. Active Stream / MP4
+    if (stream && isValidStream) {
+      return (
+        <div
+          className="player-wrapper"
+          style={styles.wrapper}
+          ref={playerWrapperRef}
+        >
+          <div style={styles.playerContainer}>
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              controls={false}
+              onPlay={onPlay}
+              muted={muted}
+              style={{ width: "100%", height: "100%", objectFit: "contain" }}
+            />
+            <div style={styles.liveBadge}>
+              <CircleIcon weight="fill" size={10} color="#ff0000" />
+              <span>LIVE</span>
+            </div>
+
+            {showPlayOverlay && (
+              <div style={styles.playOverlay}>
+                <button
+                  style={styles.bigPlayBtn}
+                  onClick={() => {
+                    if (videoRef.current) {
+                      videoRef.current.play();
+                      setShowPlayOverlay(false);
+                      jumpToLiveInternal();
+                    }
+                  }}
+                >
+                  <PlayIcon weight="fill" size={24} />
+                  Click to Watch
+                </button>
+              </div>
+            )}
+
+            {showOverlay && mediaName && (
+              <div style={styles.mediaOverlay}>🎥 Playing: {mediaName}</div>
+            )}
+
+            <button onClick={toggleFullscreen} style={styles.fsBtn}>
+              {isFullscreen ? (
+                <CornersInIcon size={24} />
+              ) : (
+                <CornersOutIcon size={24} />
+              )}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // 4. Default
+    return (
+      <div className="player-wrapper" style={styles.wrapper}>
+        <div style={{ ...styles.playerContainer, backgroundColor: "#1e293b" }}>
+          <p style={{ color: "#94a3b8" }}>
+            Waiting for Host to start content...
+          </p>
         </div>
       </div>
     );
   }
-
-  // Otherwise, show standard YouTube Player
-  return (
-    <div className="player-wrapper" style={styles.wrapper}>
-      <div style={styles.playerContainer}>
-        <ReactPlayer
-          url={url}
-          playing={playing}
-          controls={true}
-          width="100%"
-          height="100%"
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
-        />
-      </div>
-
-      {/* Control Bar (Local YouTube Control) */}
-      <div className="video-controls" style={styles.controlsBar}>
-        <div style={styles.inputWrapper}>
-          <span style={styles.inputIcon}>🔗</span>
-          <input
-            type="text"
-            placeholder="Paste YouTube URL..."
-            value={url}
-            style={styles.input}
-            onChange={(e) => setUrl(e.target.value)}
-          />
-        </div>
-        <button
-          onClick={() => setPlaying(!playing)}
-          style={playing ? styles.pauseBtn : styles.playBtn}
-        >
-          {playing ? "⏸ Pause" : "▶ Play"}
-        </button>
-      </div>
-    </div>
-  );
-});
+);
 
 const styles = {
   wrapper: {
     width: "100%",
-    // height: "100%",  <-- REMOVE this line if you haven't already (from previous fix)
-    flex: 1, // Allow flex growth
+    flex: 1,
     display: "flex",
     flexDirection: "column",
     backgroundColor: "#020617",
@@ -239,70 +380,29 @@ const styles = {
   playerContainer: {
     flex: 1,
     width: "100%",
+    height: "100%",
     backgroundColor: "black",
     position: "relative",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    minHeight: "0", // Important for Flexbox
+    minHeight: "0",
   },
   liveBadge: {
     position: "absolute",
     top: "16px",
     left: "16px",
-    backgroundColor: "#ef4444",
-    color: "white",
-    padding: "4px 12px",
-    borderRadius: "20px",
-    fontSize: "0.8rem",
-    fontWeight: "bold",
-    boxShadow: "0 2px 10px rgba(239, 68, 68, 0.5)",
-    pointerEvents: "none", // Let clicks pass through to video
-  },
-  controlsBar: {
-    padding: "16px 20px",
-    backgroundColor: "#1e293b",
-    display: "flex",
-    alignItems: "center",
-    gap: "12px",
-    borderTop: "1px solid #334155",
-  },
-  inputWrapper: {
-    flex: 1,
-    display: "flex",
-    alignItems: "center",
-    backgroundColor: "#0f172a",
-    borderRadius: "8px",
-    padding: "4px 12px",
-    border: "1px solid #334155",
-  },
-  inputIcon: { fontSize: "0.9rem", marginRight: "8px", opacity: 0.6 },
-  input: {
-    width: "100%",
-    padding: "10px 0",
-    backgroundColor: "transparent",
-    border: "none",
-    color: "white",
+    backgroundColor: "rgba(0,0,0,0.6)",
+    borderRadius: "4px",
+    color: "#FF0000",
+    padding: "4px 8px",
     fontSize: "0.9rem",
-    outline: "none",
-  },
-  playBtn: {
-    padding: "10px 20px",
-    backgroundColor: "#6366f1",
-    color: "white",
-    border: "none",
-    borderRadius: "8px",
-    fontWeight: "700",
-    cursor: "pointer",
-  },
-  pauseBtn: {
-    padding: "10px 20px",
-    backgroundColor: "#334155",
-    color: "#cbd5e1",
-    border: "1px solid #475569",
-    borderRadius: "8px",
-    fontWeight: "700",
-    cursor: "pointer",
+    fontWeight: "bold",
+    pointerEvents: "none",
+    zIndex: 20,
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
   },
   mediaOverlay: {
     position: "absolute",
@@ -315,6 +415,7 @@ const styles = {
     borderRadius: "20px",
     fontSize: "0.9rem",
     pointerEvents: "none",
+    zIndex: 20,
   },
   playOverlay: {
     position: "absolute",
@@ -326,11 +427,11 @@ const styles = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 20,
+    zIndex: 30,
   },
   bigPlayBtn: {
     padding: "16px 32px",
-    fontSize: "1.5rem",
+    fontSize: "1.2rem",
     backgroundColor: "#6366f1",
     color: "white",
     border: "none",
@@ -339,6 +440,29 @@ const styles = {
     fontWeight: "bold",
     boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
     transition: "transform 0.2s",
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+  },
+  fsBtn: {
+    position: "absolute",
+    top: "16px",
+    right: "16px",
+    background: "rgba(0, 0, 0, 0.5)",
+    borderRadius: "8px",
+    color: "white",
+    border: "1px solid rgba(255, 255, 255, 0.2)",
+    width: "40px",
+    height: "40px",
+    cursor: "pointer",
+    zIndex: 100,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "8px",
+    opacity: 0.9,
+    transition: "all 0.2s ease",
+    backdropFilter: "blur(4px)",
   },
 };
 

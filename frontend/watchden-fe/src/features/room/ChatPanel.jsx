@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect } from "react";
+import { PaperPlaneRightIcon } from "@phosphor-icons/react";
 import { sendMessage } from "../../socket/roomSocket";
 
-const ChatPanel = ({ messages, roomCode }) => {
+const ChatPanel = ({ messages, roomCode, profileMap = {} }) => {
   const [newMessage, setNewMessage] = useState("");
   const messagesEndRef = useRef(null);
 
-  // 1. Get current user to decide Left vs Right alignment
-  const currentUser = JSON.parse(sessionStorage.getItem("user"))?.username;
+  const userData = JSON.parse(sessionStorage.getItem("user"));
+  const currentUsername = userData?.username;
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -24,28 +25,30 @@ const ChatPanel = ({ messages, roomCode }) => {
   };
 
   return (
-    <div className="chat-panel">
-      {/* Messages List */}
-      {/* Messages List */}
-      <div className="messages-list">
+    <div className="chat-panel" style={styles.panel}>
+      <div className="messages-list" style={styles.messageList}>
         {messages
-          // 🔴 FIX: Filter out non-chat messages or empty content
-          .filter(
-            (msg) =>
-              msg.type === "CHAT" && msg.content && msg.content.trim() !== ""
-          )
+          .filter((msg) => msg.type === "CHAT" && msg.content?.trim() !== "")
           .map((msg, index) => {
-            const currentUser = JSON.parse(
-              sessionStorage.getItem("user")
-            )?.username;
-            const isMe = msg.sender === currentUser;
+            const isMe = msg.sender === currentUsername;
+
+            const profileById =
+              profileMap[msg.sender] || profileMap[Number(msg.sender)];
+
+            const profileByUsername = !profileById
+              ? Object.values(profileMap).find((p) => p.username === msg.sender)
+              : null;
+
+            const finalProfile = profileById || profileByUsername;
+            const displayName =
+              finalProfile?.displayName || finalProfile?.username || msg.sender;
 
             return (
               <div
                 key={index}
                 className={`message-bubble ${isMe ? "my-message" : ""}`}
               >
-                {!isMe && <span className="sender-name">{msg.sender}</span>}
+                {!isMe && <span className="sender-name">{displayName}</span>}
                 <div className="message-content">{msg.content}</div>
               </div>
             );
@@ -54,18 +57,78 @@ const ChatPanel = ({ messages, roomCode }) => {
       </div>
 
       {/* Input Area */}
-      <div className="chat-input-area">
+      <div style={styles.inputArea}>
         <input
           type="text"
           value={newMessage}
           onChange={(e) => setNewMessage(e.target.value)}
           onKeyPress={(e) => e.key === "Enter" && handleSend()}
           placeholder="Type a message..."
+          style={styles.input}
         />
-        <button onClick={handleSend}>Send</button>
+        <button onClick={handleSend} style={styles.sendButton}>
+          Send
+          <PaperPlaneRightIcon size={18} weight="bold" />
+        </button>
       </div>
     </div>
   );
+};
+
+// STYLES
+const styles = {
+  panel: {
+    display: "flex",
+    flexDirection: "column",
+    height: "100%",
+    overflow: "hidden",
+  },
+  messageList: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "10px",
+  },
+  inputArea: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    padding: "16px",
+    borderTop: "1px solid #334155",
+    backgroundColor: "#1e293b",
+    minHeight: "72px",
+    boxSizing: "border-box",
+  },
+  input: {
+    flex: 1,
+    height: "44px",
+    margin: 0,
+    padding: "0 16px",
+    borderRadius: "12px",
+    border: "1px solid #475569",
+    backgroundColor: "#0f172a",
+    color: "white",
+    fontSize: "0.95rem",
+    outline: "none",
+    boxSizing: "border-box",
+  },
+  sendButton: {
+    height: "44px",
+    margin: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    padding: "0 20px",
+    backgroundColor: "#6366f1",
+    color: "white",
+    border: "none",
+    borderRadius: "12px",
+    cursor: "pointer",
+    fontWeight: "600",
+    fontSize: "0.95rem",
+    boxSizing: "border-box",
+    whiteSpace: "nowrap",
+  },
 };
 
 export default ChatPanel;

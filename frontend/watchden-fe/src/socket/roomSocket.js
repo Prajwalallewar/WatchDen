@@ -3,32 +3,32 @@ import Stomp from "stompjs";
 
 let stompClient = null;
 
-// 🟢 Updated signature to accept onSignalReceived
+// Updated signature to accept onSignalReceived
 export const connectSocket = (
   roomId,
   onMessageReceived,
   onUserJoined,
   onSignalReceived
 ) => {
-  if (stompClient && stompClient.connected) {
-    // If we are already connected to this room, don't reconnect
+  if (stompClient) {
+    // console.log("WebSocket connection already active or pending.");
     return;
   }
 
-  // 🟢 Point this to your API Gateway (8080) or Chat Service (8082)
-  // Ensure your Gateway forwards "/ws" to the Chat Service
   const socket = new SockJS("http://localhost:8083/ws");
   stompClient = Stomp.over(socket);
-  stompClient.debug = () => { }; // Turn off debug logs for cleaner console
+  stompClient.debug = () => {};
 
   stompClient.connect(
     {},
     () => {
-      console.log("✅ WebSocket Connected!");
+      // console.log("WebSocket Connected!");
 
-      // 1. Subscribe to Chat Messages
+      // 1. Subscribe to Chat Messages (Includes JOIN/LEAVE)
       stompClient.subscribe(`/topic/room/${roomId}`, (payload) => {
-        onMessageReceived(JSON.parse(payload.body));
+        const msg = JSON.parse(payload.body);
+        // console.log("SOCKET MSG RECEIVED:", payload.body);
+        onMessageReceived(msg);
       });
 
       // 2. Subscribe to Participant Updates
@@ -36,13 +36,13 @@ export const connectSocket = (
         onUserJoined(JSON.parse(payload.body));
       });
 
-      // 3. 🟢 Subscribe to Video Signals (WebRTC)
+      // 3. Subscribe to Video Signals (WebRTC)
       stompClient.subscribe(`/topic/room/${roomId}/signal`, (payload) => {
         if (onSignalReceived) {
           const signal = JSON.parse(payload.body);
           const currentUser = JSON.parse(sessionStorage.getItem("user"));
 
-          // 🛑 Filter out my own signals so I don't process my own Offer/Answer
+          // Filter out my own signals so I don't process my own Offer/Answer
           if (currentUser && signal.sender !== currentUser.username) {
             onSignalReceived(signal);
           }
@@ -63,36 +63,35 @@ export const connectSocket = (
         );
       }
     },
-    (error) => console.log("Socket error:", error)
+    (error) => {
+      // console.log("Socket error:", error);
+      // Reset so we can retry later
+      stompClient = null;
+    }
   );
 };
 
-// 🟢 New Function: Send WebRTC Signals (Offer, Answer, ICE)
+// Send WebRTC Signals (Offer, Answer, ICE)
 export const sendSignal = (roomId, type, payload) => {
   if (stompClient && stompClient.connected) {
     const user = JSON.parse(sessionStorage.getItem("user"));
 
-    // 🛡️ Safety Check: Ensure username exists
+    // Safety Check: Ensure username exists
     if (!user || !user.username) {
-      console.error("❌ Cannot send signal: User username is missing!", user);
+      // console.error("Cannot send signal: User username is missing!", user);
       return;
     }
 
     const signalMessage = {
       type: type, // e.g. "offer"
       roomId: roomId,
-      sender: user.username, // Matches @JsonProperty("sender")
+      sender: user.username,
 
-      // 🟢 CHANGE: Stringify the payload again so Java treats it as a simple String
+      // Stringify the payload again so Java treats it as a simple String
       payload: JSON.stringify(payload),
     };
 
-    console.log(
-      "📤 Sending Signal:",
-      signalMessage.type,
-      "from",
-      signalMessage.sender
-    );
+    // console.log("Sending Signal:", signalMessage.type, "from", signalMessage.sender);
 
     stompClient.send(
       `/app/chat/${roomId}/signal`,
@@ -102,7 +101,7 @@ export const sendSignal = (roomId, type, payload) => {
   }
 };
 
-// Updated: sendMessage now accepts optional typeOverride
+// sendMessage now accepts optional typeOverride
 export const sendMessage = (roomId, messageContent, typeOverride = "CHAT") => {
   if (stompClient && stompClient.connected) {
     const user = JSON.parse(sessionStorage.getItem("user"));
@@ -142,10 +141,10 @@ export const disconnectSocket = () => {
     if (stompClient.connected) {
       try {
         stompClient.disconnect(() => {
-          console.log("Socket Disconnected");
+          // console.log("Socket Disconnected");
         });
       } catch (e) {
-        // Ignore "already closed" errors
+        // Ignore already closed errors
       }
     }
     stompClient = null;
